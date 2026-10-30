@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>테니스 스탑워치</title>
+<style>
+  :root {
+    --ball: #e4f23a;
+    --panel: rgba(9, 16, 34, 0.84);
+    --panel-border: rgba(255, 255, 255, 0.12);
+    --text: #f3f5f9;
+    --muted: #97a3ba;
+    --red: #e8504a;
+    --blue: #3f8cff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #0b1226;
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .panel {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(560px, calc(100% - 32px));
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    padding: 14px 18px 16px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  }
+  .players {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 14px;
+  }
+  .player { font-size: 12px; color: var(--muted); min-width: 0; }
+  .player .name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--text); }
+  .player.right { text-align: right; }
+  .player.right .name { justify-content: flex-end; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .bar { height: 6px; margin: 6px 0 4px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 100%; border-radius: 3px; }
+  .player.right .bar > i { margin-left: auto; }
+
+  .time {
+    font-family: "SF Mono", Consolas, "Courier New", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(32px, 9vw, 56px);
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ball);
+    text-shadow: 0 0 18px rgba(228, 242, 58, 0.35);
+  }
+  .time .ms { font-size: 0.55em; opacity: 0.75; }
+  .status { text-align: center; font-size: 13px; color: var(--muted); margin: 12px 0; min-height: 18px; }
+  .status b { color: var(--text); }
+
+  .buttons { display: flex; gap: 10px; }
+  button {
+    flex: 1;
+    height: 46px;
+    border: none;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.1s, filter 0.15s, opacity 0.15s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  button:active:not(:disabled) { transform: scale(0.97); }
+  button:disabled { opacity: 0.35; cursor: default; }
+  #startBtn { background: var(--ball); color: #1a2200; }
+  #startBtn.running { background: #ff5a4f; color: #fff; }
+  #lapBtn { background: rgba(255, 255, 255, 0.12); color: var(--text); }
+
+  .laps { list-style: none; margin: 10px 0 0; padding: 0; max-height: 96px; overflow-y: auto; font-size: 13px; }
+  .laps:empty { display: none; }
+  .laps li {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-variant-numeric: tabular-nums;
+  }
+  .laps li .total { color: var(--muted); }
+
+  .banner {
+    position: fixed;
+    left: 50%;
+    top: 47%;
+    transform: translate(-50%, -50%) scale(0.6);
+    opacity: 0;
+    pointer-events: none;
+    text-align: center;
+    white-space: nowrap;
+    padding: 18px 36px 20px;
+    border-radius: 20px;
+    background: rgba(6, 11, 26, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(6px);
+  }
+  .banner.show { animation: pop 0.6s cubic-bezier(0.2, 1.5, 0.4, 1) 0.45s forwards; }
+  .banner .sub { font-size: 14px; font-weight: 800; letter-spacing: 6px; color: var(--ball); }
+  .banner .title { font-size: clamp(36px, 9vw, 72px); font-weight: 900; text-shadow: 0 4px 24px rgba(0, 0, 0, 0.7); }
+  .banner .final { font-size: 15px; color: #fff; opacity: 0.9; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8); }
+  @keyframes pop { to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+  .hint {
+    position: fixed;
+    bottom: 10px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div class="panel">
+    <div class="players">
+      <div class="player">
+        <div class="name"><span class="dot" style="background:var(--red)"></span>레드</div>
+        <div class="bar"><i id="barA"></i></div>
+        <div id="stamA">체력 100%</div>
+      </div>
+      <div class="time" id="display">00:00<span class="ms">.00</span></div>
+      <div class="player right">
+        <div class="name">블루<span class="dot" style="background:var(--blue)"></span></div>
+        <div class="bar"><i id="barB"></i></div>
+        <div id="stamB">체력 100%</div>
+      </div>
+    </div>
+    <div class="status" id="status">시작을 누르면 경기가 시작됩니다</div>
+    <div class="buttons">
+      <button id="lapBtn" disabled>랩</button>
+      <button id="startBtn">시작</button>
+    </div>
+    <ul class="laps" id="laps"></ul>
+  </div>
+
+  <div class="banner" id="banner">
+    <div class="sub">GAME · SET · MATCH</div>
+    <div class="title" id="bannerTitle"></div>
+    <div class="final" id="bannerFinal"></div>
+  </div>
+
+  <div class="hint">Space: 시작/정지 · L: 랩 · R: 초기화</div>
+
+<script>
+  // ---------- 유틸 ----------
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const ease = x => { x = clamp01(x); return x * x * (3 - 2 * x); };
+  const mix = (c1, c2, t) => `rgb(${c1.map((v, i) => Math.round(lerp(v, c2[i], t))).join(',')})`;
+  function mulberry32(a) {
+    return () => {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  const TEAMS = [
+    { name: '레드', color: '#e8504a', dark: '#a8302b', light: '#ff9b8f' },
+    { name: '블루', color: '#3f8cff', dark: '#1f56b8', light: '#9cc4ff' },
+  ];
+
+  // ---------- 스탑워치 상태 ----------
+  let running = false;
+  let startTime = 0;
+  let elapsed = 0;
+  let laps = [];
+  let celeb = null;   // { start, winner } — 정지(경기 종료) 순간의 세리머니
+
+  const now = () => performance.now();
+  const current = () => running ? elapsed + (now() - startTime) : elapsed;
+
+  // ---------- 경기 시뮬레이션 (모두 스탑워치 시간의 함수 → 시간과 완전 동기화) ----------
+  const T_SLOW = 60, BASE_RATE = 1.15;
+  // 랠리 진행도: 시간이 지날수록 샷 속도가 느려진다 (지침)
+  const phaseAt = t => BASE_RATE * T_SLOW * Math.log(1 + t / T_SLOW) - 0.3;
+  // phaseAt의 역함수: k번째 샷을 치는 시각
+  const hitTime = p => T_SLOW * (Math.exp((p + 0.3) / (BASE_RATE * T_SLOW)) - 1);
+  // 피로도 0 → 1 (30초 ≈ 0.53, 1분 ≈ 0.78)
+  const fatigueAt = t => 1 - Math.exp(-t / 40);
+
+  // 샷마다 결정되는 값 (샷 번호의 해시 → 같은 시간엔 항상 같은 장면)
+  const hash = (n, s) => { const x = Math.sin(n * 127.1 + s * 311.7) * 43758.5453; return x - Math.floor(x); };
+
+  // 스윙 폼: 백스윙 → 임팩트 → 팔로스루 팔 각도 (0 = 앞, +아래, -위)
+  const SHOTS = {
+    serve:    { back: -2.5, contact: -1.25, follow: 1.3, arc: 22, jump: 10, label: '서브' },
+    forehand: { back: 2.9, contact: 0.25, follow: -1.35, arc: 48, jump: 0, label: '' },
+    backhand: { back: 2.6, contact: 0.1, follow: -1.7, arc: 42, jump: 0, label: '양손 백핸드', twoHand: true },
+    slice:    { back: -2.0, contact: 0.15, follow: 1.2, arc: 28, jump: 0, label: '슬라이스' },
+    lob:      { back: 1.8, contact: 0.7, follow: -2.0, arc: 110, jump: 0, label: '로브' },
+    smash:    { back: -2.5, contact: -1.25, follow: 1.3, arc: 14, jump: 16, label: '스매시!' },
+  };
+  const rawLob = k => k >= 1 && hash(k, 3) < 0.16;
+  function shotType(k) {
+    if (k <= 0) return 'serve';
+    if (rawLob(k - 1)) return 'smash';   // 로브가 올라오면 스매시로 응수
+    if (rawLob(k)) return 'lob';
+    const r = hash(k, 5);
+    return r < 0.45 ? 'forehand' : r < 0.8 ? 'backhand' : 'slice';
+  }
+  // 랠리가 길어질수록(=지칠수록) 몸을 날리다 넘어지는 일이 잦아진다
+  const isDive = k => k >= 2 && shotType(k) !== 'smash' && hash(k, 7) < 0.05 + 0.3 * Math.min(1, k / 45);
+
+  // ---------- 캔버스 ----------
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0;
+
+  function layout() {
+    return {
+      u: Math.min(H / 400, W / 620),
+      standTop: H * 0.30,
+      standBottom: H * 0.60,
+      farY: H * 0.655,
+      nearY: H * 0.95,
+      groundY: H * 0.80,
+    };
+  }
+
+  // a: 코트 길이 방향 0~1, v: 깊이 방향 0(먼 쪽)~1(가까운 쪽)
+  function courtPt(L, a, v) {
+    const y = lerp(L.farY, L.nearY, v);
+    const half = lerp(W * 0.34, W * 0.46, v);
+    const cx = W / 2 + (v - 0.5) * W * 0.10;
+    return [cx + (a - 0.5) * 2 * half, y];
+  }
+
+  let crowd = [];
+  function buildCrowd() {
+    const L = layout();
+    const rnd = mulberry32(7);
+    const r = Math.max(3, 4.2 * L.u);
+    const skins = ['#c9a27e', '#8d5a3b', '#e5c19b', '#f1d3b3', '#6b4430'];
+    const shirts = ['#e8504a', '#3f8cff', '#f2c94c', '#ffffff', '#56c596', '#b07cff', '#ff8fb1', '#30394f'];
+    crowd = [];
+    for (let y = L.standTop + r * 2; y < L.standBottom - r * 3; y += r * 2.6) {
+      for (let x = r + rnd() * r; x < W; x += r * 2.3 + rnd() * r * 0.6) {
+        crowd.push({
+          x, y,
+          r: r * (0.85 + rnd() * 0.3),
+          skin: skins[Math.floor(rnd() * skins.length)],
+          shirt: shirts[Math.floor(rnd() * shirts.length)],
+          ph: rnd() * Math.PI * 2,
+        });
+      }
+    }
+  }
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildCrowd();
+  }
+
+  // ---------- 배경 ----------
+  function drawBackground(L, animT, ct) {
+    const sky = ctx.createLinearGradient(0, 0, 0, L.standTop);
+    sky.addColorStop(0, '#060b1a');
+    sky.addColorStop(1, '#15244a');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, L.standTop + 1);
+
+    // 경기장 조명
+    for (const fx of [0.06, 0.28, 0.72, 0.94]) {
+      const gx = W * fx, gy = H * 0.07;
+      const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, H * 0.22);
+      g.addColorStop(0, 'rgba(255,250,225,0.55)');
+      g.addColorStop(0.15, 'rgba(255,250,225,0.18)');
+      g.addColorStop(1, 'rgba(255,250,225,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(gx - H * 0.22, gy - H * 0.22, H * 0.44, H * 0.44);
+      ctx.fillStyle = '#fffbe8';
+      ctx.beginPath(); ctx.arc(gx, gy, Math.max(3, 4 * L.u), 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 관중석
+    const stand = ctx.createLinearGradient(0, L.standTop, 0, L.standBottom);
+    stand.addColorStop(0, '#141d36');
+    stand.addColorStop(1, '#222f52');
+    ctx.fillStyle = stand;
+    ctx.fillRect(0, L.standTop, W, L.standBottom - L.standTop);
+
+    for (const c of crowd) {
+      const bob = ct > 0
+        ? Math.abs(Math.sin(ct * 8 + c.ph)) * c.r * 1.2
+        : Math.sin(animT * 1.5 + c.ph) * c.r * 0.08;
+      const y = c.y - bob;
+      ctx.fillStyle = c.shirt;
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath(); ctx.arc(c.x, y + c.r * 1.7, c.r * 1.1, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = c.skin;
+      ctx.beginPath(); ctx.arc(c.x, y, c.r * 0.75, 0, Math.PI * 2); ctx.fill();
+      if (ct > 0 && Math.sin(c.ph * 3) > 0.3) { // 환호하며 팔 들기
+        ctx.strokeStyle = c.skin; ctx.lineWidth = c.r * 0.35;
+        ctx.beginPath();
+        ctx.moveTo(c.x - c.r, y + c.r); ctx.lineTo(c.x - c.r * 1.3, y - c.r * 1.2);
+        ctx.moveTo(c.x + c.r, y + c.r); ctx.lineTo(c.x + c.r * 1.3, y - c.r * 1.2);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // 광고판
+    const bh = Math.max(14, 16 * L.u);
+    ctx.fillStyle = '#0d4a2f';
+    ctx.fillRect(0, L.standBottom - bh, W, bh);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = `800 ${Math.round(bh * 0.55)}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    const label = 'STOPWATCH OPEN  ●  ';
+    const lw = ctx.measureText(label).width;
+    for (let x = -((animT * 30) % lw); x < W; x += lw) ctx.fillText(label, x, L.standBottom - bh / 2);
+
+    // 코트 바깥 바닥
+    ctx.fillStyle = '#2d7a4c';
+    ctx.fillRect(0, L.standBottom, W, H - L.standBottom);
+  }
+
+  function drawCourt(L) {
+    const poly = pts => { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); };
+    const line = (a0, v0, a1, v1) => {
+      const [x0, y0] = courtPt(L, a0, v0), [x1, y1] = courtPt(L, a1, v1);
+      ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+    };
+
+    ctx.fillStyle = '#2a5db0';
+    poly([courtPt(L, -0.04, -0.06), courtPt(L, 1.04, -0.06), courtPt(L, 1.04, 1.06), courtPt(L, -0.04, 1.06)]);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = Math.max(1.5, 1.6 * L.u);
+    ctx.beginPath();
+    line(0, 0, 1, 0); line(0, 1, 1, 1);           // 복식 사이드라인
+    line(0, 0.12, 1, 0.12); line(0, 0.88, 1, 0.88); // 단식 사이드라인
+    line(0, 0, 0, 1); line(1, 0, 1, 1);           // 베이스라인
+    line(0.23, 0.12, 0.23, 0.88); line(0.77, 0.12, 0.77, 0.88); // 서비스라인
+    line(0.23, 0.5, 0.77, 0.5);                   // 센터 서비스라인
+    ctx.stroke();
+
+    // 네트
+    const netH = v => 30 * L.u * lerp(0.75, 1.15, v);
+    const [fx, fy] = courtPt(L, 0.5, -0.06), [nx, ny] = courtPt(L, 0.5, 1.06);
+    const fh = netH(-0.06), nh = netH(1.06);
+    ctx.fillStyle = 'rgba(10,15,25,0.35)';
+    poly([[fx, fy], [nx, ny], [nx, ny - nh], [fx, fy - fh]]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= 24; i++) {
+      const s = i / 24;
+      const x = lerp(fx, nx, s), y = lerp(fy, ny, s), h = lerp(fh, nh, s);
+      ctx.moveTo(x, y); ctx.lineTo(x, y - h);
+    }
+    for (let j = 1; j < 6; j++) {
+      const s = j / 6;
+      ctx.moveTo(fx, fy - fh * s); ctx.lineTo(nx, ny - nh * s);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, 2.2 * L.u);
+    ctx.beginPath(); ctx.moveTo(fx, fy - fh); ctx.lineTo(nx, ny - nh); ctx.stroke();
+    ctx.strokeStyle = '#1b1f2a';
+    ctx.lineWidth = Math.max(2, 2.5 * L.u);
+    ctx.beginPath();
+    ctx.moveTo(fx, fy); ctx.lineTo(fx, fy - fh - 3 * L.u);
+    ctx.moveTo(nx, ny); ctx.lineTo(nx, ny - nh - 3 * L.u);
+    ctx.stroke();
+  }
+
+  // ---------- 선수 ----------
+  const playerX = (side, p) => (side === 0 ? W * 0.13 : W * 0.87) + Math.sin(p * Math.PI * 0.8 + side * 1.3) * 16 * layout().u;
+
+  // 해당 선수의 타구 시점 기준 상대 위치 (-1~1, 0 = 공을 치는 순간)
+  function hitDelta(side, p) {
+    let d = ((p - side) % 2 + 2) % 2;
+    if (d >= 1) d -= 2;
+    return d;
+  }
+
+  function swingAngle(d, shot, F) {
+    // 지칠수록 백스윙·팔로스루가 작아지고 라켓이 처진다
+    const rest = 0.9 + F * 0.4;
+    const back = lerp(shot.back, rest, F * 0.35), follow = lerp(shot.follow, rest, F * 0.35);
+    if (d < -0.45) return rest;
+    if (d < -0.12) return lerp(rest, back, ease((d + 0.45) / 0.33));
+    if (d < 0) return lerp(back, shot.contact, ease((d + 0.12) / 0.12));
+    if (d < 0.14) return lerp(shot.contact, follow, ease(d / 0.14));
+    if (d < 0.5) return lerp(follow, rest, ease((d - 0.14) / 0.36));
+    return rest;
+  }
+
+  // 다이빙: 몸을 날려 치고 → 넘어지고 → 잠시 엎어져 있다가 → 일어남
+  function diveCurve(d) {
+    if (d < -0.3 || d >= 0.85) return { lunge: 0, fall: 0 };
+    if (d < 0.05) return { lunge: ease((d + 0.3) / 0.35), fall: 0 };
+    const fall = d < 0.22 ? ease((d - 0.05) / 0.17) : d < 0.55 ? 1 : 1 - ease((d - 0.55) / 0.3);
+    return { lunge: d < 0.55 ? 1 : fall, fall };
+  }
+
+  function playPose(side, p, animT, F) {
+    const d = hitDelta(side, p);
+    const k = Math.round(p - d);
+    const shot = SHOTS[shotType(k)];
+    const near = Math.exp(-((d * 3.5) ** 2));
+    const idle = clamp01((Math.abs(d) - 0.45) / 0.25);
+    const exhausted = clamp01((F - 0.5) / 0.3) * idle; // 지치면 공 없을 때 무릎 짚기
+    const dv = isDive(k) ? diveCurve(d) : { lunge: 0, fall: 0 };
+    const twoHand = shot.twoHand ? clamp01(1 - Math.abs(d) / 0.3) : 0;
+    const wobble = Math.sin(animT * 3.1 + side * 2) * 0.07 * F;
+    return {
+      arm: lerp(swingAngle(d, shot, F), 0.05, dv.fall),
+      freeArm: lerp(lerp(1.25, 0.5, near), 0.3, dv.fall),
+      crouch: lerp(0.35 + 0.5 * near, 1, dv.lunge),
+      lean: 0.12 + F * 0.3 + exhausted * 0.4 + near * 0.1 + dv.lunge * 0.45 + wobble,
+      droop: F * 0.3 + exhausted * 0.35,
+      handsOnKnee: exhausted,
+      bounce: Math.abs(Math.sin(animT * Math.PI * 2 * (1.6 - 0.8 * F))) * 5 * (1 - 0.85 * F) * (1 - near) * (1 - dv.lunge),
+      jump: (shot.jump || 0) * Math.exp(-((d * 4) ** 2)) * (1 - F * 0.5),
+      mouth: F,
+      dx: dv.lunge * 16,
+      fall: dv.fall,
+      dive: dv.lunge,
+      twoHand,
+      smile: 0, kneel: 0, dropRacket: 0,
+    };
+  }
+
+  const winPose = ct => ({
+    arm: -1.75, freeArm: -1.4, crouch: 0.15, lean: 0, droop: -0.15, handsOnKnee: 0,
+    bounce: 0, mouth: 0, smile: 1, kneel: 0, dropRacket: 0, dx: 0, fall: 0, dive: 0, twoHand: 0,
+    jump: ct > 0.5 ? Math.abs(Math.sin((ct - 0.5) * 6.5)) * 16 : 0,
+  });
+  const losePose = F => ({
+    arm: 1.45, freeArm: 1.3, crouch: 0.5, lean: 0.65, droop: 0.75, handsOnKnee: 0,
+    bounce: 0, mouth: Math.max(0.5, F), smile: 0, kneel: 1, jump: 0, dropRacket: 1,
+    dx: 0, fall: 0, dive: 0, twoHand: 0,
+  });
+
+  // 포즈 → 관절 좌표 (선수 로컬 좌표, 앞쪽 = +x, 위쪽 = -y)
+  function skeleton(pose) {
+    const k = pose.kneel, fl = pose.fall;
+    const h = lerp(lerp(31 - pose.crouch * 7, 13, k), 4, fl);
+    const lean = lerp(pose.lean, 1.45, fl);
+    const ha = lerp(lean + pose.droop, 1.5, fl);
+    const hip = [pose.dx, -h];
+    const sh = [hip[0] + Math.sin(lean) * 24, -h - Math.cos(lean) * 24];
+    const head = [sh[0] + Math.sin(ha) * 11, sh[1] - Math.cos(ha) * 11];
+    const bend = 3 + pose.crouch * 5;
+    const bf = [lerp(-11, -15, k) + pose.dx * 0.3, 0], ff = [11 + pose.dx, 0];
+    const backFoot = [lerp(bf[0], hip[0] - 22, fl), lerp(0, -1.5, fl)];
+    const frontFoot = [lerp(ff[0], hip[0] - 20, fl), lerp(0, -3.5, fl)];
+    const backKnee = [
+      lerp(lerp((hip[0] + bf[0]) / 2 + bend, -2, k), hip[0] - 11, fl),
+      lerp(lerp(-h / 2, -1.5, k), -2.5, fl),
+    ];
+    const frontKnee = [
+      lerp(lerp((hip[0] + ff[0]) / 2 + bend, 10, k), hip[0] - 10, fl),
+      lerp(lerp(-h / 2, -11, k), -5, fl),
+    ];
+    const hand = [sh[0] + Math.cos(pose.arm) * 19, sh[1] + Math.sin(pose.arm) * 19];
+    const racket = [hand[0] + Math.cos(pose.arm) * 15, hand[1] + Math.sin(pose.arm) * 15];
+    let freeHand = [sh[0] + Math.cos(pose.freeArm) * 18, sh[1] + Math.sin(pose.freeArm) * 18];
+    if (pose.handsOnKnee > 0) {
+      const knee = [frontKnee[0] + 1, frontKnee[1] - 2];
+      freeHand = [lerp(freeHand[0], knee[0], pose.handsOnKnee), lerp(freeHand[1], knee[1], pose.handsOnKnee)];
+    }
+    if (pose.twoHand > 0) freeHand = [lerp(freeHand[0], hand[0], pose.twoHand), lerp(freeHand[1], hand[1], pose.twoHand)];
+    return { h, lean, ha, hip, sh, head, backFoot, frontFoot, backKnee, frontKnee, hand, racket, freeHand };
+  }
+
+  // k번째 샷의 임팩트 지점 = 그 순간 라켓 면의 실제 위치
+  function contactPoint(k, L) {
+    const side = ((k % 2) + 2) % 2;
+    const t = hitTime(k);
+    const pose = playPose(side, k, t, fatigueAt(t));
+    const s = skeleton(pose);
+    const dir = side === 0 ? 1 : -1;
+    return { x: playerX(side, k) + dir * L.u * s.racket[0], y: L.groundY + L.u * (s.racket[1] - pose.jump) };
+  }
+  function blendPose(a, b, t) {
+    const out = {};
+    for (const k in a) out[k] = lerp(a[k], b[k], t);
+    return out;
+  }
+
+  function drawRacket(x, y, ang, team) {
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    ctx.strokeStyle = '#2b2b2b';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x - dx * 2, y - dy * 2); ctx.lineTo(x + dx * 8, y + dy * 8); ctx.stroke();
+    ctx.save();
+    ctx.translate(x + dx * 15, y + dy * 15);
+    ctx.rotate(ang);
+    ctx.beginPath(); ctx.ellipse(0, 0, 8, 5.5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 0.4;
+    ctx.beginPath();
+    for (let i = -6; i <= 6; i += 2.4) { ctx.moveTo(i, -5); ctx.lineTo(i, 5); }
+    for (let j = -4; j <= 4; j += 2.4) { ctx.moveTo(-7.5, j); ctx.lineTo(7.5, j); }
+    ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, 0, 8, 5.5, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = team.dark; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPlayer(x, gy, dir, u, team, pose, F, animT, side) {
+    const heat = clamp01(F * 0.9);
+    const skin = mix([241, 196, 158], [236, 118, 96], heat);
+    const skinDark = mix([214, 166, 128], [200, 92, 74], heat);
+    const lift = (pose.jump + pose.bounce) * u;
+
+    // 그림자
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(x + dir * u * (pose.dx + pose.fall * 8), gy, (20 + pose.fall * 14) * u * (1 - Math.min(0.4, pose.jump * 0.015)), 4 * u, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.translate(x, gy - lift);
+    ctx.scale(dir * u, u);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const { h, lean, ha, hip, sh, head, backFoot, frontFoot, backKnee, frontKnee, hand, freeHand } = skeleton(pose);
+
+    const limb = (pts, color, w) => {
+      ctx.strokeStyle = color; ctx.lineWidth = w;
+      ctx.beginPath(); pts.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.stroke();
+    };
+    const shoe = ([fx, fy]) => {
+      ctx.fillStyle = '#fafafa'; ctx.strokeStyle = '#333'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.ellipse(fx + 2, fy - 1.3, 4.2, 2.2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    };
+
+    // 뒷다리, 뒷팔
+    limb([hip, backKnee, backFoot], skinDark, 5); shoe(backFoot);
+    limb([sh, freeHand], skinDark, 4);
+
+    // 앞다리
+    limb([hip, frontKnee, frontFoot], skin, 5.2); shoe(frontFoot);
+
+    // 반바지
+    ctx.save();
+    ctx.translate(hip[0], hip[1]);
+    ctx.rotate(lean * 0.8);
+    ctx.fillStyle = '#f2f2f2';
+    ctx.beginPath();
+    ctx.moveTo(-6, -4); ctx.lineTo(6.5, -4); ctx.lineTo(7.5, 6); ctx.lineTo(-7, 6);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // 상체 + 땀에 젖은 셔츠
+    limb([hip, sh], team.color, 12);
+    ctx.globalAlpha = F * 0.55;
+    limb([[lerp(hip[0], sh[0], 0.3), lerp(hip[1], sh[1], 0.3)], [lerp(hip[0], sh[0], 0.85), lerp(hip[1], sh[1], 0.85)]], team.dark, 6);
+    ctx.globalAlpha = 1;
+    limb([sh, [lerp(sh[0], head[0], 0.4), lerp(sh[1], head[1], 0.4)]], skin, 4);
+
+    // 머리
+    ctx.save();
+    ctx.translate(head[0], head[1]);
+    ctx.rotate(ha);
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(0, 0, 7.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#3a2a20'; ctx.lineWidth = 3.2; ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.arc(0, 0, 6.3, Math.PI * 0.85, Math.PI * 1.7); ctx.stroke();
+    ctx.strokeStyle = team.color; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.moveTo(-7.3, -2.5); ctx.lineTo(7.2, -3.4); ctx.stroke();
+    ctx.lineCap = 'round';
+    // 눈
+    if (pose.smile > 0.5) {
+      ctx.strokeStyle = '#222'; ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.arc(3.8, 0, 1.3, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+    } else if (F > 0.6 || pose.kneel > 0.5 || pose.fall > 0.5) {
+      ctx.strokeStyle = '#222'; ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.moveTo(2.4, -0.3); ctx.lineTo(5, 0.4); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(3.8, -0.6, 0.95, 0, Math.PI * 2); ctx.fill();
+    }
+    // 홍조
+    ctx.fillStyle = `rgba(255,70,70,${F * 0.55})`;
+    ctx.beginPath(); ctx.arc(3, 2.8, 2, 0, Math.PI * 2); ctx.fill();
+    // 입: 웃음 / 헐떡임
+    if (pose.smile > 0.5) {
+      ctx.fillStyle = '#5a1f1f';
+      ctx.beginPath(); ctx.arc(4.6, 3, 2.2, 0, Math.PI); ctx.fill();
+    } else {
+      const open = 0.35 + pose.mouth * 1.8 * (0.6 + 0.4 * Math.abs(Math.sin(animT * 7 + side)));
+      ctx.fillStyle = '#5a1f1f';
+      ctx.beginPath(); ctx.ellipse(5.4, 3.6, 1.1, open, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+
+    // 라켓 팔
+    limb([sh, hand], skin, 4.2);
+    if (pose.dropRacket < 0.5) drawRacket(hand[0], hand[1], pose.arm, team);
+    else drawRacket(18, -1.5, 0.06, team);
+
+    // 땀방울
+    if (F > 0.12) {
+      const n = 1 + Math.floor(F * 6);
+      ctx.fillStyle = 'rgba(190,232,255,0.9)';
+      for (let i = 0; i < n; i++) {
+        const ph = (animT * 0.9 + i / n + side * 0.31) % 1;
+        const sx = head[0] + ((i * 7) % 5 - 2) * 2.4 - 2;
+        const sy = head[1] - 3 + ph * 26;
+        ctx.globalAlpha = (1 - ph) * 0.9;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - 2.6);
+        ctx.quadraticCurveTo(sx + 1.6, sy, sx, sy + 1.3);
+        ctx.quadraticCurveTo(sx - 1.6, sy, sx, sy - 2.6);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+
+    return [x + dir * u * head[0], gy - lift + u * head[1]];
+  }
+
+  function drawPant(hx, hy, dir, u, F, animT, side) {
+    const a = clamp01(Math.sin(animT * 2.2 + side * 2)) * clamp01((F - 0.4) / 0.2);
+    if (a <= 0) return;
+    const words = F > 0.82 ? ['하아…', '헉…', '하아…'] : ['헉헉', '헉', '헉헉'];
+    const text = words[Math.floor(animT * 0.7 + side) % 3];
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.font = `800 ${Math.max(11, Math.round(8 * u))}px system-ui, "Malgun Gothic", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    const x = hx - dir * 6 * u, y = hy - 16 * u - (1 - a) * 6 * u;
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+
+  // ---------- 공 ----------
+  function ballAt(p, L) {
+    const u = L.u, g = L.groundY;
+    if (p < 0) { // 서브 토스
+      const c = contactPoint(0, L), s = (p + 0.3) / 0.3;
+      return { x: c.x, y: c.y - 35 * u * (1 - s * s) };
+    }
+    const k = Math.floor(p), f = p - k;
+    const S = contactPoint(k, L), E = contactPoint(k + 1, L);
+    const arc = SHOTS[shotType(k)].arc;
+    let y;
+    if (f < 0.72) { const s = f / 0.72; y = lerp(S.y, g, s) - arc * u * 4 * s * (1 - s); }
+    else { const s = (f - 0.72) / 0.28; y = lerp(g, E.y, s) - 14 * u * 4 * s * (1 - s); }
+    return { x: lerp(S.x, E.x, f), y };
+  }
+
+  // 넘어질 때 먼지, "꽈당!", 어지러운 별
+  function drawFallFx(x, gy, dir, u, d, headX, headY, animT) {
+    if (d < 0.15 || d > 0.62) return;
+    const a = 1 - clamp01((d - 0.15) / 0.47);
+    const cx = x + dir * u * 24;
+    ctx.fillStyle = `rgba(230,225,210,${a * 0.45})`;
+    for (let i = 0; i < 6; i++) {
+      const spread = (d - 0.15) * 80;
+      const px = cx + (i - 2.5) * (6 + spread) * u * 0.6;
+      const r = (4 + spread * 0.25 + (i % 2) * 2) * u;
+      ctx.beginPath(); ctx.arc(px, gy - r * 0.6, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.font = `900 ${Math.max(13, Math.round(11 * u))}px system-ui, "Malgun Gothic", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+    const ty = gy - (34 + (d - 0.15) * 30) * u;
+    ctx.strokeText('꽈당!', cx, ty);
+    ctx.fillStyle = '#ffd34d';
+    ctx.fillText('꽈당!', cx, ty);
+    ctx.restore();
+    if (d > 0.22 && d < 0.58) { // 머리 위 빙글빙글 별
+      ctx.fillStyle = '#ffe866';
+      for (let i = 0; i < 3; i++) {
+        const ang = animT * 6 + i * (Math.PI * 2 / 3);
+        const sx = headX + Math.cos(ang) * 10 * u, sy = headY - 10 * u + Math.sin(ang) * 3 * u;
+        drawStar(sx, sy, Math.max(2.5, 2.6 * u));
+      }
+    }
+  }
+
+  function drawStar(x, y, r) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const rr = i % 2 ? r * 0.45 : r, ang = -Math.PI / 2 + i * Math.PI / 5;
+      ctx.lineTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+
+  function drawShotLabel(text, x, y, u, f, color) {
+    const a = 1 - f / 0.3;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.font = `900 italic ${Math.max(12, Math.round(10 * u))}px system-ui, "Malgun Gothic", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    const ty = y - (14 + f * 40) * u;
+    ctx.strokeText(text, x, ty);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, ty);
+    ctx.restore();
+  }
+
+  function drawBall(b, L, alpha = 1) {
+    const r = Math.max(3, 3.4 * L.u);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#e4f23a';
+    ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI * 2); ctx.fill();
+    if (alpha === 1) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = Math.max(0.8, r * 0.22);
+      ctx.beginPath(); ctx.arc(b.x - r * 0.9, b.y, r * 0.8, -0.9, 0.9); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawBallShadow(b, L) {
+    const height = Math.max(0, L.groundY - b.y) / L.u;
+    const s = 1 / (1 + height * 0.02);
+    ctx.fillStyle = `rgba(0,0,0,${0.3 * s})`;
+    ctx.beginPath(); ctx.ellipse(b.x, L.groundY, 5 * L.u * s + 1, 1.6 * L.u * s + 0.5, 0, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ---------- 승리 연출 ----------
+  let confetti = [];
+  function makeConfetti(winner) {
+    const rnd = mulberry32(Math.floor(now()));
+    const t = TEAMS[winner];
+    const colors = [t.color, t.light, '#e4f23a', '#ffffff'];
+    confetti = Array.from({ length: 160 }, () => ({
+      x: rnd() * W,
+      y0: -rnd() * H * 0.9 - 10,
+      speed: 90 + rnd() * 140,
+      sway: 10 + rnd() * 25,
+      w: 4 + rnd() * 5,
+      h: 2 + rnd() * 3,
+      ph: rnd() * Math.PI * 2,
+      spin: 2 + rnd() * 6,
+      color: colors[Math.floor(rnd() * colors.length)],
+    }));
+  }
+  function drawConfetti(ct) {
+    for (const c of confetti) {
+      let y = c.y0 + c.speed * ct;
+      if (y > H + 20) y = ((y - H - 20) % (H + 60)) - 40;
+      const x = c.x + Math.sin(ct * 2 + c.ph) * c.sway;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ct * c.spin + c.ph);
+      ctx.scale(1, Math.cos(ct * c.spin * 1.3 + c.ph));
+      ctx.fillStyle = c.color;
+      ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+      ctx.restore();
+    }
+  }
+
+  // ---------- 렌더 루프 ----------
+  function render() {
+    const L = layout();
+    const t = current() / 1000;
+    const celebrating = !running && celeb !== null;
+    const ct = celebrating ? (now() - celeb.start) / 1000 : 0;
+    const animT = t + ct;
+    const p = phaseAt(t);
+    const F = fatigueAt(t);
+    const k = Math.floor(p), fr = p - k;
+
+    // 화면 흔들림: 스매시 임팩트, 넘어지는 순간
+    let shake = 0;
+    if (running && p >= 0) {
+      if (shotType(k) === 'smash' && fr < 0.1) shake = 6 * (1 - fr / 0.1);
+      if (isDive(k) && fr > 0.18 && fr < 0.28) shake = Math.max(shake, 4 * (1 - (fr - 0.18) / 0.1));
+    }
+    ctx.save();
+    if (shake) ctx.translate(Math.sin(animT * 97) * shake * L.u, Math.cos(animT * 83) * shake * L.u);
+    ctx.fillStyle = '#0b1226';
+    ctx.fillRect(-20, -20, W + 40, H + 40);
+
+    drawBackground(L, animT, ct);
+    drawCourt(L);
+
+    // 공 위치
+    let ball = ballAt(p, L);
+    if (celebrating) { // 마지막 샷이 상대 코트를 뚫고 지나감
+      const loser = 1 - celeb.winner;
+      const endX = Math.max(10, Math.min(W - 10, playerX(loser, p) + (loser === 1 ? 1 : -1) * 75 * L.u));
+      const c = clamp01(ct / 0.7);
+      let y;
+      if (c < 0.6) { const s = c / 0.6; y = lerp(ball.y, L.groundY, s) - 20 * L.u * 4 * s * (1 - s); }
+      else { const s = (c - 0.6) / 0.4; y = L.groundY - 10 * L.u * 4 * s * (1 - s); }
+      ball = { x: lerp(ball.x, endX, c), y: y - 3 * L.u * (c >= 1 ? 1 : 0) };
+    }
+    drawBallShadow(ball, L);
+
+    // 선수
+    const heads = [];
+    for (const side of [0, 1]) {
+      let pose = playPose(side, p, animT, F);
+      if (celebrating) {
+        const e = ease(ct / 0.45);
+        pose = blendPose(pose, side === celeb.winner ? winPose(ct) : losePose(F), e);
+      }
+      const x = playerX(side, p), dir = side === 0 ? 1 : -1;
+      heads[side] = drawPlayer(x, L.groundY, dir, L.u, TEAMS[side], pose, F, animT, side);
+      const d = hitDelta(side, p);
+      if (!celebrating && isDive(Math.round(p - d))) drawFallFx(x, L.groundY, dir, L.u, d, heads[side][0], heads[side][1], animT);
+    }
+
+    // 공 잔상 + 공
+    if (running && p > 0) {
+      for (let i = 5; i >= 1; i--) drawBall(ballAt(Math.max(0, p - i * 0.022), L), L, 0.08 * (6 - i));
+    }
+    drawBall(ball, L);
+
+    // 타구 임팩트 링
+    if (running && p >= 0) {
+      const s = contactPoint(k, L);
+      if (fr < 0.12) {
+        const a = 1 - fr / 0.12, big = shotType(k) === 'smash' ? 1.8 : 1;
+        ctx.strokeStyle = `rgba(255,255,255,${a * 0.9})`;
+        ctx.lineWidth = 2 * big;
+        ctx.beginPath(); ctx.arc(s.x, s.y, (6 + (1 - a) * 18) * big * L.u, 0, Math.PI * 2); ctx.stroke();
+      }
+      if (fr < 0.3) { // 샷 이름 표시
+        const label = isDive(k) ? '다이빙!' : SHOTS[shotType(k)].label;
+        if (label) drawShotLabel(label, s.x, s.y, L.u, fr, isDive(k) ? '#ffd34d' : TEAMS[k % 2].light);
+      }
+      if (fr > 0.72 && fr < 0.84) { // 바운드 먼지
+        const a = 1 - (fr - 0.72) / 0.12;
+        const bx = ballAt(k + 0.72, L).x;
+        ctx.fillStyle = `rgba(255,255,255,${a * 0.35})`;
+        ctx.beginPath(); ctx.ellipse(bx, L.groundY, (4 + (1 - a) * 10) * L.u, 2 * L.u, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // 헐떡임 말풍선
+    for (const side of [0, 1]) {
+      if (celebrating && side === celeb.winner) continue;
+      drawPant(heads[side][0], heads[side][1], side === 0 ? 1 : -1, L.u, F, animT, side);
+    }
+
+    ctx.restore();
+    if (celebrating) drawConfetti(ct);
+
+    updateHud(t, p, F, celebrating);
+    requestAnimationFrame(render);
+  }
+
+  // ---------- HUD ----------
+  const display = document.getElementById('display');
+  const statusEl = document.getElementById('status');
+  const bars = [document.getElementById('barA'), document.getElementById('barB')];
+  const stams = [document.getElementById('stamA'), document.getElementById('stamB')];
+  const startBtn = document.getElementById('startBtn');
+  const lapBtn = document.getElementById('lapBtn');
+  const lapsEl = document.getElementById('laps');
+  const banner = document.getElementById('banner');
+
+  function format(ms, html = false) {
+    const totalCs = Math.floor(ms / 10);
+    const pad = n => String(n).padStart(2, '0');
+    const cs = totalCs % 100, s = Math.floor(totalCs / 100) % 60;
+    const m = Math.floor(totalCs / 6000) % 60, h = Math.floor(totalCs / 360000);
+    const main = (h > 0 ? h + ':' : '') + pad(m) + ':' + pad(s);
+    return html ? `${main}<span class="ms">.${pad(cs)}</span>` : `${main}.${pad(cs)}`;
+  }
+
+  const rallyCount = p => Math.max(0, Math.floor(p) + 1);
+
+  function statusText(F) {
+    if (F < 0.12) return '경기 시작! 컨디션 최상';
+    if (F < 0.3) return '팽팽한 랠리가 이어집니다';
+    if (F < 0.5) return '땀이 흐르기 시작합니다';
+    if (F < 0.68) return '숨이 가빠집니다… 헉헉';
+    if (F < 0.85) return '다리가 무거워집니다';
+    return '체력 한계! 버티기 싸움';
+  }
+
+  let lastHud = '';
+  function updateHud(t, p, F, celebrating) {
+    const stam = [100 * (1 - F * 0.96), 100 * (1 - F * 0.92)];
+    let status;
+    if (celebrating) status = `<b>${TEAMS[celeb.winner].name} 승리!</b> · 랠리 ${rallyCount(p)}구 끝에 포인트`;
+    else if (t === 0) status = '시작을 누르면 경기가 시작됩니다';
+    else status = `<b>랠리 ${rallyCount(p)}구</b> · ${running ? statusText(F) : '일시정지'}`;
+    const key = format(t * 1000) + status + stam.map(Math.round).join();
+    if (key === lastHud) return;
+    lastHud = key;
+    display.innerHTML = format(t * 1000, true);
+    statusEl.innerHTML = status;
+    stam.forEach((s, i) => {
+      bars[i].style.width = s + '%';
+      bars[i].style.background = `hsl(${s * 1.2}, 75%, 55%)`;
+      stams[i].textContent = `체력 ${Math.round(s)}%`;
+    });
+  }
+
+  function updateButtons() {
+    startBtn.textContent = running ? '정지' : (elapsed > 0 ? '계속' : '시작');
+    startBtn.classList.toggle('running', running);
+    lapBtn.textContent = running || elapsed === 0 ? '랩' : '초기화';
+    lapBtn.disabled = !running && elapsed === 0;
+  }
+
+  function renderLaps() {
+    lapsEl.innerHTML = '';
+    for (let i = laps.length - 1; i >= 0; i--) {
+      const split = laps[i] - (i ? laps[i - 1] : 0);
+      const li = document.createElement('li');
+      li.innerHTML = `<span>랩 ${i + 1}</span><span>${format(split)}</span><span class="total">${format(laps[i])}</span>`;
+      lapsEl.appendChild(li);
+    }
+  }
+
+  function showBanner(winner, t, p) {
+    document.getElementById('bannerTitle').textContent = `${TEAMS[winner].name} 승리!`;
+    document.getElementById('bannerTitle').style.color = TEAMS[winner].light;
+    document.getElementById('bannerFinal').textContent = `경기 시간 ${format(t)} · 랠리 ${rallyCount(p)}구`;
+    banner.classList.remove('show');
+    void banner.offsetWidth;
+    banner.classList.add('show');
+  }
+
+  // ---------- 조작 ----------
+  function toggle() {
+    if (running) {
+      elapsed += now() - startTime;
+      running = false;
+      // 경기 종료: 마지막으로 공을 친 선수가 포인트를 가져간다
+      const p = phaseAt(elapsed / 1000);
+      const winner = Math.floor(Math.max(0, p)) % 2;
+      celeb = { start: now(), winner };
+      makeConfetti(winner);
+      showBanner(winner, elapsed, p);
+    } else {
+      startTime = now();
+      running = true;
+      celeb = null;
+      banner.classList.remove('show');
+    }
+    updateButtons();
+  }
+
+  function lapOrReset() {
+    if (running) {
+      laps.push(current());
+    } else {
+      elapsed = 0;
+      laps = [];
+      celeb = null;
+      banner.classList.remove('show');
+      updateButtons();
+    }
+    renderLaps();
+  }
+
+  startBtn.addEventListener('click', toggle);
+  lapBtn.addEventListener('click', lapOrReset);
+  document.addEventListener('keydown', e => {
+    if (e.repeat) return;
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    else if (e.key === 'l' || e.key === 'L') { if (running) lapOrReset(); }
+    else if (e.key === 'r' || e.key === 'R') { if (!running && elapsed > 0) lapOrReset(); }
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(render);
+</script>
+</body>
+</html>
